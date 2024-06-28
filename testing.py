@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class MultipleProjections(nn.Module):
+class MoELayer(nn.Module):
     def __init__(
         self,
         in_features: int,
@@ -14,10 +14,11 @@ class MultipleProjections(nn.Module):
         super().__init__()
 
         self.num_projections = num_projections
+        self.in_features = in_features
         # self.out_features = out_features
         self.loss_scale = loss_scale
 
-        self.projection_layers1 = nn.ModuleList(
+        self.projection_layers = nn.ModuleList(
             [
                 # nn.Linear(in_features=in_features, out_features=out_features)
                 nn.Linear(in_features=in_features, out_features=in_features)
@@ -43,16 +44,18 @@ class MultipleProjections(nn.Module):
         assert x.ndim == 3
 
         B, C, D = x.shape
-
         x = x.reshape(B * C, -1)
-        layer = self.router(x).argmax(dim=1)
-        print(layer)
-        exit()
-        loss = self.compute_loss(layer=layer)
 
-        output = torch.zeros(B * C, self.out_features, device="cuda")
+        probs = F.softmax(self.router(x), dim=1)
+        layer = probs.argmax(dim=1)
+        # loss = self.compute_loss(layer=layer)
+        loss = 0
+
+        output = torch.zeros(B * C, self.in_features)
         for i in range(self.num_projections):
-            output[layer == i] = self.projection_layers1[i](x[layer == i])
+            output[layer == i] = self.projection_layers[i](x[layer == i]) * probs[
+                layer == i
+            ].max(dim=1)[0].unsqueeze(1)
 
         output = output.reshape(B, C, -1)
         return output, loss
@@ -61,6 +64,8 @@ class MultipleProjections(nn.Module):
 if __name__ == "__main__":
     in_feature = 256
     num_projections = 4
-
-    layer = MultipleProjections(in_features=in_feature, num_projections=num_projections)
+    a = torch.rand(64, 22, 256)
+    layer = MoELayer(in_features=in_feature, num_projections=num_projections)
+    logits, loss = layer(a)
+    print(logits.shape)
     pass

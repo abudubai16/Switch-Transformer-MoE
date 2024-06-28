@@ -1,3 +1,5 @@
 # Ignore the virtual environment
 myenv/
 
+# Ignore pre-commit hooks
+./pre-commit-config.yaml
