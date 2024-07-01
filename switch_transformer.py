@@ -96,7 +96,7 @@ class TransformerDecoderLayer(nn.TransformerDecoderLayer):
         self,
         d_model: int,
         nhead: int,
-        num_projections: int,
+        num_experts: int,
         loss_scale: float = 3.5e3,
         dim_feedforward: int = 2048,
         dropout: float = 0.1,
@@ -122,14 +122,18 @@ class TransformerDecoderLayer(nn.TransformerDecoderLayer):
             layer_norm_eps=layer_norm_eps,
         )
         self.moe_layer = MoELayer(
-            in_features=d_model, num_projections=num_projections, loss_scale=loss_scale
+            in_features=d_model,
+            num_experts=num_experts,
+            dim_feedforward=dim_feedforward,
+            loss_scale=loss_scale,
+            dropout1=self.dropout,
+            dropout2=self.dropout3,
         )
         del self.linear1
         del self.linear2
 
     def _ff_block(self, x: torch.Tensor) -> torch.Tensor:
         x, loss = self.moe_layer(x)
-        x = self.dropout3(self.activation(x))
         return x, loss
 
     def forward(
@@ -278,7 +282,7 @@ class TransformerDecoder(nn.TransformerDecoder):
 
 if __name__ == "__main__":
     a = torch.rand(64, 22, 256)
-    layer = TransformerDecoderLayer(256, 4, 4)
+    layer = TransformerDecoderLayer(256, 4, 4, dim_feedforward=256)
     layer = TransformerDecoder(decoder_layer=layer, num_layers=4)
     logits, loss = layer(a, a)
     print(logits.shape)

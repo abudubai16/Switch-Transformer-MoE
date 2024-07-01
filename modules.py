@@ -3,47 +3,62 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def init_w(layer):
+    assert isinstance(
+        layer, torch.Tensor
+    ), f"The tensor must be an instance of a torch.Tensor, instead its a type {type(layer)}"
+    layer = nn.init.xavier_normal_(layer)
+    return layer
+
+
 class MoELayer(nn.Module):
     def __init__(
         self,
         in_features: int,
-        # out_features: int,
-        num_projections: int,
+        dim_feedforward: int,
+        num_experts: int,
+        activation: nn.functional = F.relu,
+        dropout1: nn.Dropout = nn.Dropout(),
+        dropout2: nn.Dropout = nn.Dropout(),
         loss_scale: float = 3e-6,
     ) -> None:
         super().__init__()
 
-        self.num_projections = num_projections
+        self.num_experts = num_experts
         self.in_features = in_features
-        # self.out_features = out_features
         self.loss_scale = loss_scale
 
-        self.projection_layers = nn.ModuleList(
-            [
-                # nn.Linear(in_features=in_features, out_features=out_features)
-                nn.Linear(in_features=in_features, out_features=in_features)
-                for _ in range(num_projections)
-            ]
-        )
-        self.router = nn.Linear(in_features=in_features, out_features=num_projections)
+        self.dropout1 = dropout1
+        self.dropout2 = dropout2
+        self.activation = activation
+
+        w1 = torch.empty(num_experts, in_features, dim_feedforward)
+        w2 = torch.empty(num_experts, dim_feedforward, in_features)
+
+        self.w1 = nn.Parameter(init_w(w1))
+        self.w2 = nn.Parameter(init_w(w2))
+        self.linear1 = lambda pos, mat: mat @ self.w1[pos]
+        self.linear2 = lambda pos, mat: mat @ self.w2[pos]
+
+        self.router = nn.Linear(in_features=in_features, out_features=num_experts)
 
     def compute_loss(
         self,
         layer: torch.Tensor,
         probs: torch.Tensor,
-    ) -> torch.Tensor:  # TODO: Check the loss function with the loss
-        fractions = torch.zeros(self.num_projections)
-        probability = torch.zeros(self.num_projections)
+    ) -> torch.Tensor:
+        fractions = torch.zeros(self.num_experts)
+        probability = torch.zeros(self.num_experts)
         T_i = layer.shape[0]
 
-        for i in range(self.num_projections):
+        for i in range(self.num_experts):
             fractions[i] = torch.sum(layer == i) / T_i
             probability[i] = (
                 torch.sum(probs[layer == i].max(dim=1)[0] / layer.shape[0]) / T_i
             )
 
         aux_loss = (
-            torch.sum(fractions * probability) * self.loss_scale * self.num_projections
+            torch.sum(fractions * probability) * self.loss_scale * self.num_experts
         )
         return aux_loss
 
@@ -61,18 +76,17 @@ class MoELayer(nn.Module):
         loss = self.compute_loss(layer=layer, probs=probs)
 
         output = torch.zeros(B * C, self.in_features)
-        for i in range(self.num_projections):
-            output[layer == i] = self.projection_layers[i](x[layer == i]) * probs[
-                layer == i
-            ].max(dim=1)[0].unsqueeze(1)
+        for i in range(self.num_experts):
+            prob = probs[layer == i].max(dim=1)[0].unsqueeze(1)
+            values = x[layer == i]
+            logits = self.linear2(
+                i, self.dropout1(self.activation(self.linear1(i, values)))
+            )
+            output[layer == i] = self.dropout2(logits) * prob
 
         output = output.reshape(B, C, -1)
         return output, loss
 
 
 if __name__ == "__main__":
-    a = torch.rand(64, 22, 256)
-    layer = MoELayer(256, 4)
-    logits, loss = layer(a)
-    print(loss)
     pass
