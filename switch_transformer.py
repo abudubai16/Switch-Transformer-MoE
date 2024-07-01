@@ -1,5 +1,5 @@
 import copy
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union, Callable
 
 import torch
 import torch.nn as nn
@@ -100,6 +100,8 @@ class TransformerDecoderLayer(nn.TransformerDecoderLayer):
         loss_scale: float = 3.5e3,
         dim_feedforward: int = 2048,
         dropout: float = 0.1,
+        activation: Union[str, Callable[[Tensor], Tensor]] = F.relu,
+        layer_norm_eps: float = 1e-5,
         batch_first: bool = False,
         norm_first: bool = False,
         bias: bool = True,
@@ -116,6 +118,8 @@ class TransformerDecoderLayer(nn.TransformerDecoderLayer):
             bias=bias,
             device=device,
             dtype=dtype,
+            activation=activation,
+            layer_norm_eps=layer_norm_eps,
         )
         self.moe_layer = MoELayer(
             in_features=d_model, num_projections=num_projections, loss_scale=loss_scale
@@ -125,7 +129,7 @@ class TransformerDecoderLayer(nn.TransformerDecoderLayer):
 
     def _ff_block(self, x: torch.Tensor) -> torch.Tensor:
         x, loss = self.moe_layer(x)
-        x = self.dropout(F.relu(x))
+        x = self.dropout3(self.activation(x))
         return x, loss
 
     def forward(
